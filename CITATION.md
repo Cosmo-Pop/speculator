@@ -165,7 +165,7 @@ archivePrefix = {arXiv},
           url = {https://proceedings.neurips.cc/paper_files/paper/2019/file/bdbca288fee7f92f2bfa9f7012727740-Paper.pdf}
 }
 
-@article{pedregosa11,
+@ARTICLE{pedregosa11,
   author  = {Fabian Pedregosa and Ga{{\"e}}l Varoquaux and Alexandre Gramfort and Vincent Michel and Bertrand Thirion and Olivier Grisel and Mathieu Blondel and Peter Prettenhofer and Ron Weiss and Vincent Dubourg and Jake Vanderplas and Alexandre Passos and David Cournapeau and Matthieu Brucher and Matthieu Perrot and {{\'E}}douard Duchesnay},
   title   = {Scikit-learn: Machine Learning in Python},
   journal = {Journal of Machine Learning Research},
