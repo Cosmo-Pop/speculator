@@ -10,3 +10,6 @@ You can install the code with pip:
 ```bash
 pip install git+https://github.com/Cosmo-Pop/speculator.git@torch
 ```
+
+## References
+- J. Alsing et al. (2020). ApJS 249, 5. [arXiv:1911.11778](https://arxiv.org/abs/1911.11778)
