@@ -158,8 +158,28 @@ class Speculator(torch.nn.Module):
         # optimizer
         self.optimizer = torch.optim.Adam(self.params, lr=1e-3)
 
+        # backwards-compatible loading from state dict
         if restore:
-            self.load_state_dict(torch.load(restore_filename, map_location=device, weights_only=restore_weights_only))
+            restore_state_dict = torch.load(restore_filename, map_location=device, weights_only=restore_weights_only)
+            try:
+                missing, unexpected = self.load_state_dict(restore_state_dict)
+            except RuntimeError as err:
+                # this catches an old-style state dict with different structure
+                # it attempts to build something compatible with the new class by copying keys
+                missing, unexpected = self.load_state_dict(restore_state_dict, strict=False)
+                if len(unexpected) == 0 and len(missing) == len(restore_state_dict.keys()):
+                    for i in range(self.n_layers):
+                        restore_state_dict[f'W.{i}'] = restore_state_dict[f'params.{i}']
+                        restore_state_dict[f'b.{i}'] = restore_state_dict[f'params.{self.n_layers + i}']
+                    for i in range(self.n_layers - 1):    
+                        restore_state_dict[f'alphas.{i}'] = restore_state_dict[f'params.{2*self.n_layers + i}']
+                        restore_state_dict[f'betas.{i}'] = restore_state_dict[f'params.{3*self.n_layers - 1 + i}']
+                    self.load_state_dict(restore_state_dict)
+                # if things don't look compatible, raise the error anyway
+                else:
+                    raise err
+
+
 
     # change the device we're on
     def set_device(self, device):
