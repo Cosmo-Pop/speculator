@@ -6,12 +6,6 @@ import wandb
 from sklearn.decomposition import IncrementalPCA
 from torch.utils.data import DataLoader, TensorDataset
 
-
-class SqrtTransform(torch.nn.Module):
-    def forward(self, x):
-        return torch.sqrt(x)
-
-
 class Speculator(torch.nn.Module):
     """
     SPECULATOR model
