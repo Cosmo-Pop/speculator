@@ -800,6 +800,41 @@ class SpectrumPCA:
 class PhotulatorBasic(torch.nn.Module):
     """
     PHOTULATOR model for emulating photometry.
+
+    This is a minimal, simplified version with untrainable activation functions.
+
+    Attributes
+    ----------
+    n_parameters : int
+        Number of SPS parameters.
+    n_hidden : list of int
+        Number of units per hidden layer.
+    filters : list of str
+        Names of filters being emulated.
+    n_filters : int
+        Number of filters being emulated, `len(filters)`.
+    parameter_names : list of str
+        Names for the SPS parameters
+    architecture : list of int
+        Input and output dimensions of the network layers.
+    n_layers : int
+        Number of network layers.
+    activation : torch.nn.Module
+        Activation function.
+    parameters_shift : torch.Tensor
+        Shift for the input SPS parameters.
+    parameters_scale : torch.Tensor
+        Scale for the input SPS parameters.
+    magnitudes_shift : torch.Tensor
+        Shift for the output magnitudes.
+    magnitudes_scale : torch.Tensor
+        Scale for the output magnitudes.
+    network : torch.nn.Sequential
+        Emulator network.
+    f_b : torch.Tensor
+        Flux softening parameter (b in Lupton+99 eq. 3).
+    ln10 : torch.Tensor
+        Natural logarithm of 10.
     """
 
     def __init__(
@@ -818,16 +853,32 @@ class PhotulatorBasic(torch.nn.Module):
     ):
         """
         Constructor.
-        :param n_parameters: number of SED model parameters (inputs to the network)
-        :param filters: list of filter names
-        :param parameters_shift: shift for input parameters
-        :param parameters_scale: scale for input parameters
-        :param magnitudes_shift: shift for the output mags
-        :param magnitudes_scale: scale for the output mags
-        :param n_hidden: list with number of hidden units for each hidden layer
-        :param sigma_init: std dev of weight and bias initization
-        :param transform: StackedTransform for transforming parameters before passing to network
-        :param parameter_names: list of the names of the parameters that the model expects as inputs when calling it
+        
+        Parameters
+        ----------
+        n_parameters : int, optional
+            Number of input SPS parameters.
+        filters : list of str, optional
+            Names of the filter(s) being emulated.
+        parameters_shift : torch.Tensor, optional
+            Shift for the input SPS parameters.
+        parameters_scale : torch.Tensor, optional
+            Scale for the input SPS parameters.
+        magnitudes_shift : torch.Tensor, optional
+            Shift for the output magnitudes.
+        magnitudes_scale : torch.Tensor, optional
+            Scale for the output magnitudes.
+        f_b : torch.Tensor, optional
+            Flux softening parameter (b in Lupton+99 eq. 3) when
+            predicting asinh magnitudes (luptitudes).
+        n_hidden : list of int, optional
+            Number of units per hidden layer.
+        sigma_init : torch.Tensor, optional
+            Initial weight standard deviation. Unused.
+        activation : torch.nn.Module, optional
+            Activation function.
+        parameter_names : list of str, optional
+            Names of input SPS parameters.
         """
 
         # super
@@ -917,10 +968,22 @@ class PhotulatorBasic(torch.nn.Module):
         )
         self.register_buffer("ln10", torch.tensor(np.log(10), dtype=torch.float32))
 
-    # call: forward pass through the network to predict magnitudes
-    # by default this should predict absolute unit mass magnitudes
     def forward(self, parameters):
+        """
+        Forward pass through the network.
 
+        Predicts absolute magnitude per unit stellar mass formed.
+
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+
+        Returns
+        -------
+        output : torch.Tensor
+            Absolute magnitudes per unit mass.
+        """
         # shift and scale the inputs
         output = torch.divide(
             torch.subtract(parameters, self.parameters_shift), self.parameters_scale
@@ -936,9 +999,22 @@ class PhotulatorBasic(torch.nn.Module):
 
         return output
 
-    # compute fluxes in maggies
     def flux(self, parameters, N):
+        """
+        Compute flux in maggies.
 
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        flux : torch.Tensor
+            Flux in maggies (AB system).
+        """
         return torch.exp(
             torch.multiply(
                 torch.multiply(
@@ -949,14 +1025,40 @@ class PhotulatorBasic(torch.nn.Module):
             )
         )
 
-    # pass inputs through the network to predict apparent magnitudes (in standard magnitude units)
     def magnitudes(self, parameters, N):
+        """
+        Compute apparent magnitude.
 
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        mag : torch.Tensor
+            Apparent magnitude (AB system).
+        """
         return torch.add(self.forward(parameters), N)
 
-    # pass inputs through the network to predict asinh magnitudes (in standard magnitude units)
     def luptitudes(self, parameters, N):
+        """
+        Compute asinh magnitude (Lupton+99).
 
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        asinh_mag : torch.Tensor
+            Asinh magnitudes using internal `f_b` attribute as softening scale.
+        """
         # absolute magnitudes -> flux in nano maggies
         flux = torch.multiply(
             self.flux(parameters, N),
@@ -995,6 +1097,46 @@ class PhotulatorBasic(torch.nn.Module):
 class Photulator(torch.nn.Module):
     """
     PHOTULATOR model for emulating photometry.
+
+    Full-featured version. 
+    Includes parametrized activation function from Alsing+20.
+
+    Attributes
+    ----------
+    n_parameters : int
+        Number of SPS parameters.
+    n_hidden : list of int
+        Number of units per hidden layer.
+    filters : list of str
+        Names of filters being emulated.
+    n_filters : int
+        Number of filters being emulated, `len(filters)`.
+    parameter_names : list of str
+        Names for the SPS parameters
+    architecture : list of int
+        Input and output dimensions of the network layers.
+    n_layers : int
+        Number of network layers.
+    parameters_shift : torch.Tensor
+        Shift for the input SPS parameters.
+    parameters_scale : torch.Tensor
+        Scale for the input SPS parameters.
+    magnitudes_shift : torch.Tensor
+        Shift for the output magnitudes.
+    magnitudes_scale : torch.Tensor
+        Scale for the output magnitudes.
+    W : torch.nn.ParameterList
+        Neural network weights.
+    b : torch.nn.ParameterList
+        Neural network biases.
+    alphas : torch.nn.ParameterList
+        Scaling in non-linear activation function (beta in Alsing+20 eq. 8).
+    betas : torch.nn.ParameterList
+        Offset in activation function (gamma in Alsing+20 eq. 8).
+    f_b : torch.Tensor
+        Flux softening parameter (b in Lupton+99 eq. 3).
+    ln10 : torch.Tensor
+        Natural logarithm of 10.
     """
 
     def __init__(
@@ -1012,16 +1154,29 @@ class Photulator(torch.nn.Module):
     ):
         """
         Constructor.
-        :param n_parameters: number of SED model parameters (inputs to the network)
-        :param filters: list of filter names
-        :param parameters_shift: shift for input parameters
-        :param parameters_scale: scale for input parameters
-        :param magnitudes_shift: shift for the output mags
-        :param magnitudes_scale: scale for the output mags
-        :param n_hidden: list with number of hidden units for each hidden layer
-        :param sigma_init: std dev of weight and bias initization
-        :param transform: StackedTransform for transforming parameters before passing to network
-        :param parameter_names: list of the names of the parameters that the model expects as inputs when calling it
+        
+        Parameters
+        ----------
+        n_parameters : int, optional
+            Number of input SPS parameters.
+        filters : list of str, optional
+            Names of the filter(s) being emulated.
+        parameters_shift : torch.Tensor, optional
+            Shift for the input SPS parameters.
+        parameters_scale : torch.Tensor, optional
+            Scale for the input SPS parameters.
+        magnitudes_shift : torch.Tensor, optional
+            Shift for the output magnitudes.
+        magnitudes_scale : torch.Tensor, optional
+            Scale for the output magnitudes.
+        f_b : torch.Tensor, optional
+            Flux softening parameter (b in Lupton+99 eq. 3).
+        n_hidden : list of int, optional
+            Number of units per hidden layer.
+        sigma_init : torch.Tensor, optional
+            Initial weight standard deviation. Unused.
+        parameter_names : list of str, optional
+            Names of input SPS parameters.
         """
 
         # super
@@ -1037,10 +1192,6 @@ class Photulator(torch.nn.Module):
         # architecture
         self.architecture = [self.n_parameters] + self.n_hidden + [self.n_filters]
         self.n_layers = len(self.architecture) - 1
-
-        # shifts and scales...
-
-        # shifts and scales and transform matrix into tensorflow constants...
 
         # input parameters shift and scale
         self.register_buffer(
@@ -1132,9 +1283,24 @@ class Photulator(torch.nn.Module):
         )
         self.register_buffer("ln10", torch.tensor(np.log(10), dtype=torch.float32))
 
-    # non-linear activation function
     def activation(self, x, alpha, beta):
+        """
+        Non-linear activation function (Alsing+20 eq. 8).
 
+        Parameters
+        ----------
+        x : torch.tensor
+            Inputs.
+        alpha : torch.tensor
+            Scaling parameter (beta in Alsing+20 eq. 8).
+        beta : torch.tensor
+            Offset parameter (gamma in Alsing+20 eq. 8).
+
+        Returns
+        -------
+        a : torch.tensor
+            Activation function evaluated for `x`.
+        """
         return torch.multiply(
             torch.add(
                 beta,
@@ -1143,23 +1309,27 @@ class Photulator(torch.nn.Module):
             x,
         )
 
-    # call: forward pass through the network to predict magnitudes
-    # by default this should predict absolute unit mass magnitudes
-    def forward(self, parameters):
 
+    def forward(self, parameters):
+        """
+        Forward pass through the network.
+
+        Predicts absolute magnitude per unit stellar mass formed.
+
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+
+        Returns
+        -------
+        output : torch.Tensor
+            Absolute magnitudes per unit mass.
+        """
         # shift and scale
         output = torch.divide(
             torch.subtract(parameters, self.parameters_shift), self.parameters_scale
         )
-
-        # layers
-        # for i in range(self.n_layers - 1):
-
-        # non-linear activation function
-        #    output = self.activation(torch.add(torch.matmul(output, self.W[i]), self.b[i]), self.alphas[i], self.betas[i])
-
-        # linear output layer
-        # output = torch.add(torch.matmul(output, self.W[-1]), self.b[-1])
 
         # layers
         for i, (W, b, alpha, beta) in enumerate(
@@ -1176,9 +1346,22 @@ class Photulator(torch.nn.Module):
 
         return output
 
-    # compute fluxes in maggies
     def flux(self, parameters, N):
+        """
+        Compute flux in maggies.
 
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        flux : torch.Tensor
+            Flux in maggies (AB system).
+        """
         return torch.exp(
             torch.multiply(
                 torch.multiply(
@@ -1189,14 +1372,40 @@ class Photulator(torch.nn.Module):
             )
         )
 
-    # pass inputs through the network to predict apparent magnitudes (in standard magnitude units)
     def magnitudes(self, parameters, N):
+        """
+        Compute apparent magnitude.
 
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        mag : torch.Tensor
+            Apparent magnitude (AB system).
+        """
         return torch.add(self.forward(parameters), N)
 
-    # pass inputs through the network to predict asinh magnitudes (in standard magnitude units)
     def luptitudes(self, parameters, N):
+        """
+        Compute asinh magnitude (Lupton+99).
 
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        asinh_mag : torch.Tensor
+            Asinh magnitudes using internal `f_b` attribute as softening scale.
+        """
         # absolute magnitudes -> flux in nano maggies
         flux = torch.multiply(
             self.flux(parameters, N),
@@ -1233,41 +1442,102 @@ class Photulator(torch.nn.Module):
 
 
 class PhotulatorModelStack:
+    """
+    Stack of Photulator models for many bands.
 
+    Attributes
+    ----------
+    n_emulators : int
+        Number of Photulator models in the stack.
+    emulators : list of Photulator or PhotulatorBasic
+        Photometry emulators.
+    """
     def __init__(self, root_dir, filenames, device="cpu", weights_only=False):
+        """
+        Constructor.
 
+        Parameters
+        ----------
+        root_dir : str
+            Path to a parent directory where the emulators live.
+        filenames : list of str
+            Names of the saved emulators within `root_dir`.
+        device : str, optional
+            Device to load the emulators onto.
+        weights_only : bool, optional
+            If `True`, calls `torch.load` with `weights_only=True`. Default is `False`.
+        """
         # how many emulators?
         self.n_emulators = len(filenames)
 
         # load emulator models
-        self.emulators = [torch.load(filename, weights_only=weights_only).to(device) for filename in filenames]
+        self.emulators = [torch.load(root_dir + filename, weights_only=weights_only).to(device) for filename in filenames]
 
-    # compute fluxes (in units of nano maggies) given SPS parameters (theta) and normalization (N = -2.5log10M + dm(z))
     def fluxes(self, theta, N):
+        """
+        Compute flux in maggies.
 
+        Parameters
+        ----------
+        theta : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        flux : torch.Tensor
+            Flux in maggies (AB system).
+        """
         return torch.concat(
             [self.emulators[i].fluxes(theta, N) for i in range(self.n_emulators)],
             axis=-1,
         )
 
-    # compute magnitudes given SPS parameters (theta) and normalization (N = -2.5log10M + dm(z))
     def magnitudes(self, theta, N):
+        """
+        Compute apparent magnitude.
 
+        Parameters
+        ----------
+        theta : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        mag : torch.Tensor
+            Apparent magnitude (AB system).
+        """
         return torch.concat(
             [self.emulators[i].magnitudes(theta, N) for i in range(self.n_emulators)],
             axis=-1,
         )
 
-    # compute magnitudes given SPS parameters (theta) and normalization (N = -2.5log10M + dm(z))
     def luptitudes(self, theta, N):
+        """
+        Compute asinh magnitude (Lupton+99).
 
+        Parameters
+        ----------
+        theta : torch.Tensor
+            Input SPS parameters.
+        N : torch.Tensor
+            Normalisation factor, distmod - 2.5*log10(M/Msun).
+
+        Returns
+        -------
+        asinh_mag : torch.Tensor
+            Asinh magnitudes using internal `f_b` attributes as softening scale.
+        """
         return torch.concat(
             [self.emulators[i].luptitudes(theta, N) for i in range(self.n_emulators)],
             axis=-1,
         )
 
 
-# train photulator model stack
+### train photulator model stack ###
 def train_photulator_stack(
     training_theta,
     training_N,
@@ -1594,22 +1864,41 @@ def train_photulator_stack(
         torch.save(photulator_gpu.state_dict(), save_location + "_state_gpu.pt")
 
 
-# magnitude conversion functions
-
-
-# flux in nano maggies to apparent magnitudes
+### magnitude conversion functions ###
 def flux2mag(flux):
+    """
+    Convert flux to apparent magnitude.
+
+    Parameters
+    ----------
+    flux : torch.tensor
+        Flux in nanomaggies.
+
+    Returns
+    -------
+    mag : torch.Tensor
+        AB magnitude.
+    """
     return -2.5 * torch.log10(flux) + 22.5
 
 
-# flux in nano maggies to asinh magnitudes
 def flux2asinhmag(flux, f_b):
     """
-    Computes the asinh magnitudes from fluxes
+    Convert flux to asinh magnitude.
+    
+    Parameters
+    ----------
+    flux : torch.Tensor 
+        Flux in nanomaggies.
+    f_b : torch.Tensor
+        Flux softening parameter (b in Lupton+99 eq. 3). Sets the flux
+        below which asinh mag becomes approximately linear (rather than
+        logarithmic. Units of nanomaggies.
 
-    flux: torch tensor, should be in units of nano maggies
-    f_b: flux below which the asinh magnitude is linear, should be in units of nano maggies
-
+    Returns
+    -------
+    asinh_mag : torch.Tensor
+        Asinh magnitudes.
     """
 
     asinh_mag = -1.0857362047581294 * (
@@ -1619,17 +1908,24 @@ def flux2asinhmag(flux, f_b):
     return asinh_mag
 
 
-# asinh magnitudes to fluxes in nano maggies
 def asinhmag2flux(asinh_mag, f_b):
     """
-    Computes fluxes in nano maggies from asinh magnitudes
+    Convert asinh magnitude to flux.
+    
+    Parameters
+    ----------
+    asinh_mag : torch.Tensor 
+        Asinh magnitude assuming a softening of `f_b`.
+    f_b : torch.Tensor
+        Flux softening parameter (b in Lupton+99 eq. 3). Sets the flux
+        below which asinh mag becomes approximately linear (rather than
+        logarithmic. Units of nanomaggies.
 
-    asinh_magnitudes: torch tensor, should be in normal magnitude units
-    f_b: flux below which the asinh magnitude is linear, should be in units of nanomaggies
-    f_0: reference flux, default is 1 jansky or 10^9 nanomaggies
-
+    Returns
+    -------
+    flux : torch.Tensor
+        Flux in nanomaggies.
     """
-
     return (
         torch.sinh(-(asinh_mag / -1.0857362047581294) + torch.log(10**9 / f_b))
         * 2
@@ -1637,14 +1933,41 @@ def asinhmag2flux(asinh_mag, f_b):
     )
 
 
-# magnitudes to asinh magnitudes
 def mag2asinhmag(mag, f_b):
+    """
+    Convert magnitude to asinh magnitude.
+    
+    Parameters
+    ----------
+    mag : torch.Tensor 
+        Logarithmic AB magnitude.
+    f_b : torch.Tensor
+        Flux softening parameter (b in Lupton+99 eq. 3). Units of nanomaggies.
+
+    Returns
+    -------
+    asinh_mag : torch.Tensor
+        Asinh magnitudes.
+    """
     return flux2asinhmag(10 ** (-0.4 * (mag - 22.5)), f_b)
 
 
-# asinh magnitudes to magnitudes
 def asinhmag2mag(asinhmag, f_b):
+    """
+    Convert asinh magnitude to magnitude.
+    
+    Parameters
+    ----------
+    asinh_mag : torch.Tensor 
+        Asinh magnitude assuming a softening of `f_b`.
+    f_b : torch.Tensor
+        Flux softening parameter (b in Lupton+99 eq. 3). Units of nanomaggies.
 
+    Returns
+    -------
+    mag : torch.Tensor
+        Logarithmic AB magnitude.
+    """
     return flux2mag(
         torch.sinh(asinhmag / (-1.0857362047581294) + torch.log(10**9 / f_b))
         * 2.0
