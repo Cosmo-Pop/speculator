@@ -8,7 +8,50 @@ from torch.utils.data import DataLoader, TensorDataset
 
 class Speculator(torch.nn.Module):
     """
-    SPECULATOR model
+    SPECULATOR model for emulating SEDs.
+
+    Attributes
+    ----------
+    n_parameters : int
+        Number of SPS parameters used as input.
+    n_wavelengths : int
+        Number of wavelengths in grid.
+    n_pcas : int
+        Number of principal components used in decomposition.
+    n_hidden : list of int
+        Number of units per hidden layer.
+    wavelengths : torch.tensor
+        Wavelength grid.
+    architecture : list of int
+        Input and output dimensions of layers.
+    n_layers : int
+        Number of network layers.
+    parameters_shift : torch.tensor
+        Shift applied to parameters before feeding into network.
+    parameters_scale : torch.tensor
+        Scale applied to parameters before feeding into network.
+    pca_shift : torch.tensor
+        Shift applied to PCA scores predicted by the network.
+    pca_scale : torch.tensor
+        Scale applied to PCA scores predicted by the network.
+    log_spectrum_shift : torch.tensor
+        Shift applied to spectrum predicted by the network.
+    log_spectrum_scale : torch.tensor
+        Scale applied to spectrum predicted by the network.
+    pca_transform_matrix : torch.tensor
+        Matrix that transforms from PCA scores to log spectrum.
+    W : torch.nn.ParameterList
+        Neural network weights.
+    b : torch.nn.ParameterList
+        Neural network biases.
+    alphas : torch.nn.ParameterList
+        Scaling in non-linear activation function (beta in Alsing+20 eq. 8).
+    betas : torch.nn.ParameterList
+        Offset in activation function (gamma in Alsing+20 eq. 8).
+    params : torch.nn.ParameterList
+        Full set of trainable parameters.
+    optimizer : torch.optim.Optimizer
+        Optimizer targetting `params`.
     """
 
     def __init__(
@@ -31,16 +74,41 @@ class Speculator(torch.nn.Module):
     ):
         """
         Constructor.
-        :param n_parameters: number of SED model parameters (inputs to the network)
-        :param n_wavelengths: number of wavelengths in the modelled SEDs
-        :param pca_transform_matrix: the PCA basis vectors, ie., an [n_pcas x n_wavelengths] matrix
-        :param parameters_shift: shift for input parameters
-        :param parameters_scalet: scale for input parameters
-        :param pca_shift: shift for PCA coefficients
-        :param pca_scale: scale for PCA coefficients
-        :param log_spectrum_shift: shift for the output spectra
-        :param log_spectrum_scale: scale for the output spectra
-        :param n_hiddens: list with number of hidden units for each hidden layer
+
+        Parameters
+        ----------
+        n_parameters : int, optional
+            Number of input SPS parameters.
+        wavelengths : torch.tensor, optional
+            Target wavelength grid.
+        pca_transform_matrix : torch.tensor, optional
+            Matrix with PCA basis vectors, shape `(n_pcas, n_wavelengths)`.
+        parameters_shift : torch.tensor, optional
+            Shift applied to inputs.
+        parameters_scale : torch.tensor, optional
+            Scale applied to inputs.
+        pca_shift : torch.tensor, optional
+            Shift applied to output PCA scores.
+        pca_scale : torch.tensor, optional
+            Scale applied to output PCA scores.
+        log_spectrum_shift : torch.tensor, optional
+            Shift applied to output log spectrum.
+        log_spectrum_scale : torch.tensor, optional
+            Scale applied to output log spectrum.
+        n_hidden : list of int, optional
+            Number of units per hidden layer. The network will be initialized
+            with `len(n_hidden)` hidden layers, plus an input and output layer.
+        optimizer : torch.optim.Optimizer, optional
+            Optimizer (currently ignored/not implemented; defaults to Adam).
+        restore : bool, optional
+            If `True`, attempts to load a state dict from `restore_filename`.
+        restore_filename : str, optional
+            Path to a trained `Speculator` model (.pt file).
+        restore_weights_only : bool, optional
+            If `True`, tries to call `torch.load` with `weights_only=True`.
+            Default is `False` (i.e. living dangerously).
+        device : str, optional
+            Device to build everything on. 
         """
 
         # super
@@ -175,9 +243,15 @@ class Speculator(torch.nn.Module):
 
 
 
-    # change the device we're on
     def set_device(self, device):
+        """
+        Change device.
 
+        Parameters
+        ----------
+        device : str or torch.device
+            Device to move all class attributes to.
+        """
         self.parameters_shift = self.parameters_shift.to(device)
         self.parameters_scale = self.parameters_scale.to(device)
 
@@ -197,11 +271,25 @@ class Speculator(torch.nn.Module):
             self.betas[i] = self.betas[i].to(device)
 
         self.params = torch.nn.ParameterList(self.W + self.b + self.alphas + self.betas)
-        self.optimizer = self.optimizer_constructor(self.params)
 
-    # non-linear activation function
     def activation(self, x, alpha, beta):
+        """
+        Non-linear activation function (Alsing+20 eq. 8).
 
+        Parameters
+        ----------
+        x : torch.tensor
+            Inputs.
+        alpha : torch.tensor
+            Scaling parameter (beta in Alsing+20 eq. 8).
+        beta : torch.tensor
+            Offset parameter (gamma in Alsing+20 eq. 8).
+
+        Returns
+        -------
+        a : torch.tensor
+            Activation function evaluated for `x`.
+        """
         return torch.multiply(
             torch.add(
                 beta,
@@ -212,9 +300,20 @@ class Speculator(torch.nn.Module):
             x,
         )
 
-    # call: forward pass through the network to predict magnitudes
     def forward(self, parameters):
+        """
+        Forward pass through the network to predict PCA coefficients.
 
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters in real space.
+
+        Returns
+        -------
+        output : torch.Tensor
+            Output PCA coefficients.
+        """
         output = torch.divide(
             torch.subtract(parameters, self.parameters_shift), self.parameters_scale
         )
@@ -235,17 +334,37 @@ class Speculator(torch.nn.Module):
 
         return output
 
-    # save the state dict
     def save(self, filename):
+        """
+        Save the state dict for later restore.
+
+        Parameters
+        ----------
+        filename : str
+            Path to save the state dict to.
+        """
         torch.save(self.state_dict(), filename)
 
-    # pass inputs through the network to predict spectrum
     def log_spectrum(self, parameters):
+        """
+        Forward pass to predict a log spectrum.
+
+        Parameters
+        ----------
+        parameters : torch.Tensor
+            Input SPS parameters in real space.
+
+        Returns
+        -------
+        log_spectrum : torch.Tensor
+            Output log spectrum.
+        """
 
         # pass through network to compute PCA coefficients
         pca_coefficients = self.forward(parameters)
 
-        # transform from PCA to normalized spectrum basis; shift and re-scale normalized spectrum -> spectrum
+        # transform from PCA to normalized spectrum basis; 
+        # shift and re-scale normalized spectrum -> spectrum
         return torch.add(
             torch.multiply(
                 torch.matmul(pca_coefficients, self.pca_transform_matrix),
@@ -255,9 +374,24 @@ class Speculator(torch.nn.Module):
         )
 
     ### Infrastructure for network training ###
-
     def compute_loss_spectra(self, spectra, parameters, noise_floor):
+        """
+        Compute loss in spectrum space.
 
+        Parameters
+        ----------
+        spectra : torch.Tensor
+            Target spectra (units of Lsun/Hz).
+        parameters : torch.Tensor
+            SPS parameters.
+        noise_floor : torch.Tensor
+            Error tolerance per wavelength bin.
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Root mean squared error weighted by `noise_floor`.
+        """
         return torch.sqrt(
             torch.mean(
                 torch.divide(
@@ -272,13 +406,41 @@ class Speculator(torch.nn.Module):
         )
 
     def compute_loss_pca(self, pca, parameters):
+        """
+        Compute loss in space of PCA coefficients.
 
+        Parameters
+        ----------
+        pca : torch.Tensor
+            Target PCA coefficients.
+        parameters : torch.Tensor
+            SPS parameters.
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Root mean squared error.
+        """
         return torch.sqrt(
             torch.mean(torch.square(torch.subtract(self.forward(parameters), pca)))
         )
 
     def compute_loss_log_spectra(self, log_spectra, parameters):
+        """
+        Compute loss in space of log spectra.
 
+        Parameters
+        ----------
+        log_spectra : torch.Tensor
+            Target log(spectra).
+        parameters : torch.Tensor
+            SPS parameters.
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Root mean squared error.
+        """
         return torch.sqrt(
             torch.mean(
                 torch.square(torch.subtract(self.log_spectrum(parameters), log_spectra))
@@ -288,6 +450,28 @@ class Speculator(torch.nn.Module):
     def training_step(
         self, theta, outputs, maxbatch=10000, loss_type="pca", noise_floor=None
     ):
+        """
+        Training epoch with sub-batching.
+
+        Parameters
+        ----------
+        theta : torch.Tensor
+            Input SPS parameters.
+        outputs : torch.Tensor
+            Target outputs (PCA coefficients, log spectra, or spectra).
+        maxbatch : int, optional
+            Maximum batch size before sub-batching will be used. Default is 10000.
+        loss_type : str, optional
+            Space to compute loss in. Should match `outputs` and be one of
+            `['pca', 'log_spectra', 'spectra']`. Default (recommended) is `'pca'`.
+        noise_floor : torch.Tensor, optional
+            Wavelength weighting to use if `loss_type='spectra'`. Not used otherwise.
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Accumulated loss.
+        """
         self.optimizer.zero_grad()
         if theta.shape[0] < maxbatch:
 
@@ -344,7 +528,37 @@ class Speculator(torch.nn.Module):
 
 class SpectrumPCA:
     """
-    SPECULATOR PCA compression class
+    SPECULATOR PCA compression class.
+
+    Attributes
+    ----------
+    n_parameters : int
+            Number of SPS parameters.
+    n_wavelengths : int
+        Number of wavelengths in spectra.
+    n_pcas : int
+        Number of principal components to use.
+    n_batches : int
+        Number of batches of training data `len(log_spectrum_filenames)`.
+    log_spectrum_filenames : list of str
+        Paths to files containing log spectra to build PCA from.
+    parameter_filenames : list of str
+        Paths to files containing SPS parameters.
+    parameter_selection : callable
+        Function that returns a boolean array applying a selection
+        cut given SPS parameters.
+    PCA : sklearn.decomposition.IncrementalPCA
+        Object that builds the PCA.
+    log_spectrum_shift : np.array
+        Shift applied to log spectra.
+    log_spectrum_scale : np.array
+        Scale applied to output log spectra.
+    parameter_shift : np.array
+        Shift applied to SPS parameters.
+    parameter_scale : np.array
+        Scale applied to SPS parameters.
+    pca_transform_matrix : np.array
+        Matrix containing PCA basic vectors.
     """
 
     def __init__(
@@ -358,11 +572,22 @@ class SpectrumPCA:
     ):
         """
         Constructor.
-        :param n_parameters: number of SED model parameters (inputs to the network)
-        :param n_wavelengths: number of wavelengths in the modelled SEDs
-        :param n_pcas: number of PCA components
-        :param log_spectrum_filenames: list of .npy filenames for log spectra (each one an [n_samples, n_wavelengths] array)
-        :param parameter_filenames: list of .npy filenames for parameters (each one an [n_samples, n_parameters] array)
+        
+        Parameters
+        ----------
+        n_parameters : int
+            Number of SPS parameters.
+        n_wavelengths : int
+            Number of wavelengths in spectra.
+        n_pcas : int
+            Number of principal components to use.
+        log_spectrum_filenames : list of str
+            Paths to files containing log spectra to build PCA from.
+        parameter_filenames : list of str
+            Paths to files containing SPS parameters.
+        parameter_selection : callable, optional
+            Function that returns a boolean array applying a selection
+            cut given SPS parameters.
         """
 
         # input parameters
@@ -379,9 +604,13 @@ class SpectrumPCA:
         # parameter selection (implementing any cuts on strange parts of parameter space)
         self.parameter_selection = parameter_selection
 
-    # compute shift and scale for spectra and parameters
     def compute_spectrum_parameters_shift_and_scale(self):
+        """
+        Compute shift and scale for inputs and outputs.
 
+        Sets attributes `log_spectrum_shift`, `log_spectrum_scale`,
+        `parameter_shift`, `parameter_scale`.
+        """
         # shift and scale
         self.log_spectrum_shift = np.zeros(self.n_wavelengths)
         self.log_spectrum_scale = np.zeros(self.n_wavelengths)
@@ -430,9 +659,12 @@ class SpectrumPCA:
                     np.std(parameters[selection, :], axis=0) / self.n_batches
                 )
 
-    # train PCA incrementally
     def train_pca(self):
+        """
+        Train PCA incrementally.
 
+        Updates the `PCA` attribute and sets `pca_transform_matrix`.
+        """
         # loop over training data files, increment PCA
         for i in range(self.n_batches):
 
@@ -465,9 +697,23 @@ class SpectrumPCA:
         # set the PCA transform matrix
         self.pca_transform_matrix = self.PCA.components_
 
-    # transform the training data set to PCA basis
     def transform_and_stack_training_data(self, filename, retain=False):
+        """
+        Transform the training data set to PCA basis.
 
+        Sets attributes `pca_shift`, `pca_scale`, 
+        optionally sets `training_pca`, `training_parameters`.
+
+        Saves stacked data to `filename + '_pca.npy'` 
+        and `filename + '_parameters.npy'`.
+
+        Parameters
+        ----------
+        filename : str
+            Path to save stacked and transformed data to.
+        retain : bool, optional
+            If `True`, stores the stacked data as class attributes.
+        """
         # transform the spectra to PCA basis
         training_pca = np.concatenate(
             [
@@ -502,9 +748,24 @@ class SpectrumPCA:
             self.training_pca = training_pca
             self.training_parameters = training_parameters
 
-    # make a validation plot of the PCA given some validation data
     def validate_pca_basis(self, log_spectrum_filename, parameter_filename=None):
+        """
+        Apply the PCA transform to some unseen data.
 
+        Parameters
+        ----------
+        log_spectrum_filename : str
+            Path to validation data (log spectra).
+        parameter_filename : str, optional
+            Path to corresponding SPS parameters (if parameter selection is needed).
+
+        Returns
+        -------
+        log_spectra : np.array
+            Original spectra loaded from `log_spectrum_filename`.
+        log_spectra_in_basis : np.array
+            Reconstruction of spectra after projecting to/from PCA coefficients.
+        """
         # load in the data (and select based on parameter selection if neccessary)
         if self.parameter_selection is None:
 
@@ -538,7 +799,7 @@ class SpectrumPCA:
 
 class PhotulatorBasic(torch.nn.Module):
     """
-    PHOTULATOR model
+    PHOTULATOR model for emulating photometry.
     """
 
     def __init__(
@@ -733,7 +994,7 @@ class PhotulatorBasic(torch.nn.Module):
 
 class Photulator(torch.nn.Module):
     """
-    PHOTULATOR model
+    PHOTULATOR model for emulating photometry.
     """
 
     def __init__(
@@ -969,98 +1230,6 @@ class Photulator(torch.nn.Module):
                 ),
             ),
         )
-
-    ### Infrastructure for network training ###
-
-    # def compute_loss_absolute_magnitudes(self, theta, N, mags):
-
-    #    return torch.sqrt(torch.mean( torch.square(torch.subtract(self.forward(theta), mags)) ))
-
-    # def compute_loss_luptitudes(self, theta, N, mags):
-
-    #    return torch.sqrt(torch.mean( torch.square(torch.subtract(self.luptitudes(theta, N), mags)) ))
-
-    # def training_step_absolute_magnitudes(self, theta, N, mags, optimizer):
-
-    # zero the gradients first
-    #    optimizer.zero_grad()
-
-    #    with torch.set_grad_enabled(True):
-
-    # loss
-    #        loss = self.compute_loss_absolute_magnitudes(theta, N, mags)
-
-    # backprop
-    #        loss.backward()
-
-    # update
-    #    optimizer.step()
-
-    #    return loss
-
-    # def training_step_absolute_magnitudes_accumulated(self, theta, N, mags, optimizer, maxbatch=10000):
-
-    # zero the gradients first
-    #    optimizer.zero_grad()
-
-    # create iterable dataset
-    #    dataloader = DataLoader(TensorDataset(theta, N, mags), batch_size=maxbatch)
-
-    # loop over sub batches
-    #    for theta_, N_, mags_ in dataloader:
-    #        with torch.set_grad_enabled(True):
-
-    # loss
-    #            loss = self.compute_loss_absolute_magnitudes(theta_, N_, mags_) * torch.true_divide(theta_.shape[0], theta.shape[0])
-
-    # backprop
-    #            loss.backward()
-
-    # update parameters
-    #    optimizer.step()
-
-    #    return loss
-
-    # def training_step_luptitudes(self, theta, N, mags, optimizer):
-
-    # zero the gradients first
-    #    optimizer.zero_grad()
-
-    #    with torch.set_grad_enabled(True):
-
-    # loss
-    #        loss = self.compute_loss_luptitudes(theta, N, mags)
-
-    # backprop
-    #        loss.backward()
-
-    # update
-    #    optimizer.step()
-
-    #    return loss
-
-    # def training_step_luptitudes_accumulated(self, theta, N, mags, optimizer, maxbatch=10000):
-
-    # zero the gradients first
-    #    optimizer.zero_grad()
-
-    # create iterable dataset
-    #    dataloader = DataLoader(TensorDataset(theta, N, mags), batch_size=maxbatch)
-
-    # loop over sub batches
-    #    for theta_, N_, mags_ in dataloader:
-    #        with torch.set_grad_enabled(True):
-
-    # loss
-    #            loss = self.compute_loss_luptitudes(theta_, N_, mags_) * torch.true_divide(theta_.shape[0], theta.shape[0])
-
-    # backprop
-    #            loss.backward()
-
-    # update parameters
-    #    optimizer.step()
-
-    #    return loss
 
 
 class PhotulatorModelStack:
