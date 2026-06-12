@@ -1638,6 +1638,12 @@ def train_photulator_stack(
     # how many training rounds to do?
     rounds = len(lr)
 
+    # handle f_b more robustly
+    if f_b is None and loss_in == 'asinhmag':
+        raise ValueError('If asinhmag loss is used, f_b must be provided.')
+    elif f_b is None and loss_in == 'absmag':
+        f_b = [None]*len(filters) # ensures f_b is a list even if it isn't used
+
     # train each band in turn
     for f in range(len(filters)):
 
