@@ -1566,64 +1566,68 @@ def train_photulator_stack(
     cuda_graphs=False,
 ):
     """
-    Trains a Photulator model for astronomical magnitude prediction.
+    Trains a stack of Photulator models.
 
     Parameters
     ----------
     training_theta : torch.Tensor
-        Physical parameters for training samples, shape (n_samples, n_parameters)
+        SPS parameters for training data, shape `(n_samples, n_parameters)`.
     training_N : torch.Tensor
-        Normalization factors for training samples
+        Normalization factors for training data, shape `(n_samples,)`.
+        Normalisation factor defined as N = distmod - 2.5*log10(M/Msun).
     training_mag : torch.Tensor
-        Magnitude values for training samples, shape (n_samples, n_filters)
+        Magnitude values for training data, shape `(n_samples, n_filters)`.
     parameters_shift : torch.Tensor
-        Mean values for parameter normalization
+        Mean shift for parameter normalization.
     parameters_scale : torch.Tensor
-        Standard deviation values for parameter normalization
+        Standard deviation for parameter normalization.
     magnitudes_shift : list
-        Mean values for magnitude normalization, one per filter
+        Mean shift for magnitude normalization, one per filter.
     magnitudes_scale : list
-        Standard deviation values for magnitude normalization, one per filter
-    parameter_names : list, optional
-        Names of the physical parameters
-    n_layers : int, default=4
-        Number of hidden layers in the neural network
-    n_units : int, default=128
-        Number of units per hidden layer
-    filters : list, optional
-        List of filter names to train models for
-    validation_split : float, default=0.1
-        Fraction of data to use for validation
-    lr : list, default=[1e-3, 1e-4, 1e-5]
-        Learning rates for each training round
-    batch_size : list, default=[1000, 10000, 100000]
-        Batch sizes for each training round
-    maxepochs : int, default=500
-        Maximum number of epochs to train for
-    patience : int, default=20
-        Number of epochs with no improvement before early stopping
-    root_dir : str, default=''
-        Directory to save trained models
-    verbose : bool, default=True
-        Whether to print progress information
-    device : str, default='cuda'
-        Device to use for training ('cuda' or 'cpu')
+        Standard deviation for magnitude normalization, one per filter.
+    parameter_names : list of str, optional
+        Names of the SPS parameters.
+    n_layers : int, optional
+        Number of hidden layers in the neural network. Default is 4.
+    n_units : int, optional
+        Number of units per hidden layer. Default is 128.
+    filters : list of str, optional
+        List of filter names to train models for.
+    validation_split : float, optional
+        Fraction of data to hold out for validation. Default is 0.1.
+    lr : list of float, optional
+        Learning rates for each training round. Default is `[1e-3, 1e-4, 1e-5]`.
+    batch_size : list of int, optional
+        Batch sizes for each training round. Default is `[1000, 10000, 100000]`.
+        This should have the same length as `lr`.
+    maxepochs : int, optional
+        Maximum number of epochs per training round. Default is 500.
+    patience : int, optional
+        Number of epochs with no improvement before early stopping. Default is 20.
+    root_dir : str, optional
+        Directory to save trained models. Default is the current directory.
+    verbose : bool, optional
+        Whether to print progress information. Default is `True`.
+    device : str, optional
+        Device to use for training (`'cuda'` or `'cpu'`).
     wandb_init : dict, optional
-        Weights & Biases initialization parameters
-    loss_in : str, default='absmag'
-        Loss function to use ('absmag' or 'asinhmag')
-    f_b : list, optional
-        Softening parameters for asinh magnitudes, one per filter
-    sigma_init : float, default=1e-2
-        Initial value for weight initialization
-    activation : str, default='alsing20'
-        Activation function for neural network layers ('alsing20', 'tanh', 'silu', or 'leakyrelu')
-    cuda_graphs : bool, default=False
-        Whether to use CUDA graphs for optimization
+        Weights & Biases initialization parameters.
+    loss_in : str, optional
+        Loss function to use (`'absmag'` or `'asinhmag'`).
+    f_b : array-like, optional
+        Softening parameters for asinh magnitudes, one per filter.
+    sigma_init : float, optional
+        Standard deviation for for weight initialization.  Default is `1e-2`.
+    activation : str, optional
+        Activation function for neural network layers. Default is `'alsing20'`.
+        Options are `('alsing20', 'tanh', 'silu', 'leakyrelu')`.
+    cuda_graphs : bool, optional
+        Whether to use CUDA graphs for optimization. Default is `False`.
 
     Notes
     -----
-    For lower error rates on the models please use lower learning rates with large batch sizes at the end.
+    For lower error rates on the models it is recommended to use a small learning
+    rate and high batch size during the last training round.
     """
     # Set matmuls to high
     torch.set_float32_matmul_precision("high")
