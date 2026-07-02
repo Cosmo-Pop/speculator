@@ -503,18 +503,18 @@ class Speculator(torch.nn.Module):
                     # loss
                     if loss_type == "pca":
                         loss = (
-                            self.compute_loss_pca(theta_, outputs_)
+                            self.compute_loss_pca(outputs_, theta_)
                             * theta_.shape[0]
                             / theta.shape[0]
                         )
                     elif loss_type == "log_spectra":
                         loss = (
-                            self.compute_loss_log_spectra(theta_, outputs_)
+                            self.compute_loss_log_spectra(outputs_, theta_)
                             * theta_.shape[0]
                             / theta.shape[0]
                         )
                     elif loss_type == "spectra":
-                        loss = self.compute_loss_spectra(theta_, outputs_, noise_floor)
+                        loss = self.compute_loss_spectra(outputs_, theta_, noise_floor)
 
                     # backprop
                     loss.backward()
