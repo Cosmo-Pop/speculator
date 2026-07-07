@@ -1937,8 +1937,8 @@ def asinhmag2flux(asinh_mag, f_b):
         Flux in nanomaggies.
     """
     return (
-        torch.sinh(-(asinh_mag / -1.0857362047581294) + torch.log(10**9 / f_b))
-        * 2
+        torch.sinh((asinh_mag / -1.0857362047581294) + torch.log(10**9 / f_b))
+        * 2.0
         * f_b
     )
 
@@ -1979,7 +1979,7 @@ def asinhmag2mag(asinhmag, f_b):
         Logarithmic AB magnitude.
     """
     return flux2mag(
-        torch.sinh(asinhmag / (-1.0857362047581294) + torch.log(10**9 / f_b))
+        torch.sinh((asinhmag / -1.0857362047581294) + torch.log(10**9 / f_b))
         * 2.0
         * f_b
     )
