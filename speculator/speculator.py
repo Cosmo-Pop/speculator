@@ -1490,7 +1490,7 @@ class PhotulatorModelStack:
             Flux in maggies (AB system).
         """
         return torch.concat(
-            [self.emulators[i].fluxes(theta, N) for i in range(self.n_emulators)],
+            [self.emulators[i].flux(theta, N) for i in range(self.n_emulators)],
             axis=-1,
         )
 
