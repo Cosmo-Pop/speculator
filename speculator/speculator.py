@@ -1441,6 +1441,63 @@ class Photulator(torch.nn.Module):
         )
 
 
+def _check_photulator_layer_parameters(model, filename):
+    """
+    Guard against loading a Photulator artifact with an incompatible
+    activation-parameter layout.
+
+    Two incompatible generations of trained Photulator artifact exist.
+    Current-generation artifacts were trained with the parametrized
+    activation applied to every layer (including the output projection) and
+    carry `n_layers` alpha/beta pairs, matching the zip loop in
+    `Photulator.forward`. Older, TF-converted artifacts trained a *linear*
+    output layer and carry only `n_layers - 1` alpha/beta pairs -- no
+    activation was ever trained (or saved) for the output layer.
+
+    `Photulator.forward` zips `self.W`, `self.b`, `self.alphas` and
+    `self.betas` together, so a shorter alphas/betas list silently changes
+    behaviour instead of raising: depending on how the artifact was
+    constructed, either the final linear projection is dropped from the zip
+    entirely, or it ends up paired with uninitialized, randomly-drawn
+    activation parameters that were never overwritten. Either way the
+    result is wrong photometry with no error or warning (tens of magnitudes
+    off has been observed in practice on a real, non-mock artifact).
+
+    Parameters
+    ----------
+    model : Photulator or PhotulatorBasic
+        A freshly loaded emulator, as returned by `torch.load`.
+    filename : str
+        Path the emulator was loaded from, used only for the error message.
+
+    Raises
+    ------
+    ValueError
+        If `model` supplies fewer alpha/beta pairs than its own `n_layers`.
+    """
+    alphas = getattr(model, "alphas", None)
+    betas = getattr(model, "betas", None)
+    n_layers = getattr(model, "n_layers", None)
+    if alphas is None or betas is None or n_layers is None:
+        # not a Photulator (e.g. PhotulatorBasic uses a plain nn.Sequential
+        # with an untrainable activation and has no alphas/betas to check)
+        return
+    if len(alphas) != n_layers or len(betas) != n_layers:
+        raise ValueError(
+            f"Photulator artifact '{filename}' supplies {len(alphas)} alpha "
+            f"and {len(betas)} beta arrays, but its architecture implies "
+            f"n_layers={n_layers}. This is a legacy artifact trained with a "
+            f"linear output layer (n_layers-1 activation pairs), which "
+            f"Photulator.forward() cannot serve correctly: it applies the "
+            f"parametrized activation to every layer, including the output "
+            f"projection, and would silently corrupt predictions rather "
+            f"than raise. Evaluate this artifact with a linear-output "
+            f"forward pass instead (out = out @ W[-1] + b[-1], no "
+            f"activation on the final layer), not through "
+            f"Photulator/PhotulatorModelStack."
+        )
+
+
 class PhotulatorModelStack:
     """
     Stack of Photulator models for many bands.
@@ -1471,7 +1528,12 @@ class PhotulatorModelStack:
         self.n_emulators = len(filenames)
 
         # load emulator models
-        self.emulators = [torch.load(root_dir + filename, weights_only=weights_only).to(device) for filename in filenames]
+        self.emulators = []
+        for filename in filenames:
+            path = root_dir + filename
+            emulator = torch.load(path, weights_only=weights_only)
+            _check_photulator_layer_parameters(emulator, path)
+            self.emulators.append(emulator.to(device))
 
     def fluxes(self, theta, N):
         """
@@ -1490,7 +1552,7 @@ class PhotulatorModelStack:
             Flux in maggies (AB system).
         """
         return torch.concat(
-            [self.emulators[i].fluxes(theta, N) for i in range(self.n_emulators)],
+            [self.emulators[i].flux(theta, N) for i in range(self.n_emulators)],
             axis=-1,
         )
 
